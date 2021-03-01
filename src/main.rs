@@ -1,76 +1,62 @@
-#![feature(allocator_api, new_uninit)]
-use byteorder::{LittleEndian, WriteBytesExt};
-use bytes::{self, Buf, BufMut};
-use reqwest;
-use std::sync::Arc;
-use std::{convert::TryFrom, io::Read};
-use std::{fmt::Write, thread};
-use tokio::sync::Mutex;
-use warp::{hyper::body::HttpBody, Filter};
+use actix_web::{client, dev::Body, web, App, HttpServer, Result};
+use std::convert::TryFrom;
+use std::sync::Mutex;
 
-fn get_i32() -> Arc<Mutex<i32>> {
-    Arc::new(Mutex::new(0))
+struct AppStateWithBasicData {
+    cursor: Mutex<i32>, // <- Mutex is necessary to mutate safely across threads
 }
 
-#[tokio::main]
-async fn main() {
-    let cmd_post: warp::filters::BoxedFilter<(
-        Result<warp::http::Response<bytes::Bytes>, warp::http::Error>,
-    )> = warp::post()
-        .and(warp::path("cmd"))
-        .and(warp::path::end())
-        .and(warp::any().map(move || reqwest::Client::new()))
-        .and(warp::body::bytes())
-        .and_then(
-            |http_client: reqwest::Client, bytes: bytes::Bytes| async move {
-                let cmd = std::str::from_utf8(&bytes[..]).unwrap();
-                let cursor = http_client
-                    .post("http://localhost:3030/get_cursor")
-                    .send()
-                    .await
-                    .unwrap()
-                    .bytes()
-                    .await
-                    .unwrap();
-                let cursor = <[u8; 4]>::try_from(&cursor[..]).unwrap();
-                let cursor = i32::from_ne_bytes(cursor);
+#[actix_web::main]
+async fn main() -> std::io::Result<()> {
+    let basic_data = web::Data::new(AppStateWithBasicData {
+        cursor: Mutex::new(0),
+    });
 
-                let is_ok = http_client
-                    .post("http://localhost:3030/print")
-                    .body(format!("{}\n{}:", cmd, cursor))
-                    .send()
-                    .await;
-                match is_ok {
-                    Ok(is_ok) => match is_ok.bytes().await {
-                        Ok(ret) => Ok(warp::http::Response::builder().body(ret)),
-                        Err(_) => Err(warp::reject::not_found()),
-                    },
-                    Err(_) => Err(warp::reject::not_found()),
-                }
-            },
-        )
-        .boxed();
+    HttpServer::new(move || {
+        App::new()
+            .app_data(basic_data.clone())
+            .route("/get_cursor", web::post().to(get_cursor_handler))
+            .route("/cmd", web::post().to(cmd_handler))
+    })
+    .bind("127.0.0.1:3031")?
+    .run()
+    .await
+}
 
-    let cursor = get_i32();
-    let get_cursor_post: warp::filters::BoxedFilter<(
-        Result<warp::http::Response<bytes::Bytes>, warp::http::Error>,
-    )> = warp::post()
-        .and(warp::path("get_cursor"))
-        .and(warp::path::end())
-        .and(warp::any().map(move || cursor.clone()))
-        .and_then(|cursor: Arc<Mutex<i32>>| async move {
-            let begin = *cursor.lock().await;
-            let bytes = begin.to_ne_bytes();
-            let bytes = bytes::BytesMut::from(&bytes[..]);
-            if true {
-                Ok(warp::http::Response::builder().body(bytes::Bytes::from(bytes)))
-            } else {
-                Err(warp::reject::not_found())
-            }
-        })
-        .boxed();
+async fn cmd_handler(bytes: web::Bytes) -> Result<String> {
+    let cmd = String::from(std::str::from_utf8(&bytes[..]).unwrap());
 
-    warp::serve(cmd_post.or(get_cursor_post))
-        .run(([127, 0, 0, 1], 3031))
-        .await;
+    let cursor = client::Client::new()
+        .post("http://localhost:3030/get_cursor")
+        .send_body(Body::from_message(cmd.clone()))
+        .await
+        .unwrap()
+        .body()
+        .await
+        .unwrap();
+    let cursor = <[u8; 4]>::try_from(&cursor[..]).unwrap();
+    let cursor = i32::from_ne_bytes(cursor);
+
+    client::Client::new()
+        .post("http://localhost:3030/print")
+        .send_body(Body::from_message(format!("{}\n{}:", cmd, cursor)))
+        .await
+        .unwrap()
+        .body()
+        .await
+        .unwrap();
+
+    Ok(format!("Welcome {}!", "info.username"))
+}
+
+async fn get_cursor_handler(
+    data: web::Data<AppStateWithBasicData>,
+    // bytes: web::Bytes,
+) -> Result<web::Bytes> {
+    // let cmd = String::from(std::str::from_utf8(&bytes[..]).unwrap());
+    // println!("{}", cmd);
+    let mut cursor = data.cursor.lock().unwrap();
+    *cursor += 1;
+    let bytes = cursor.to_ne_bytes().to_vec();
+    Ok(web::Bytes::from(bytes))
 }
