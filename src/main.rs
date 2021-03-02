@@ -16,6 +16,7 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .app_data(basic_data.clone())
             .route("/get_cursor", web::post().to(get_cursor_handler))
+            .route("/set_cursor", web::post().to(set_cursor_handler))
             .route("/cmd", web::post().to(cmd_handler))
     })
     .bind("127.0.0.1:3031")?
@@ -53,8 +54,16 @@ async fn get_cursor_handler(
     data: web::Data<AppStateWithBasicData>,
     // bytes: web::Bytes,
 ) -> Result<web::Bytes> {
-    // let cmd = String::from(std::str::from_utf8(&bytes[..]).unwrap());
-    // println!("{}", cmd);
+    let mut cursor = data.cursor.lock().unwrap();
+    *cursor += 1;
+    let bytes = cursor.to_ne_bytes().to_vec();
+    Ok(web::Bytes::from(bytes))
+}
+
+async fn set_cursor_handler(
+    data: web::Data<AppStateWithBasicData>,
+    // bytes: web::Bytes,
+) -> Result<web::Bytes> {
     let mut cursor = data.cursor.lock().unwrap();
     *cursor += 1;
     let bytes = cursor.to_ne_bytes().to_vec();
