@@ -1,5 +1,6 @@
 use actix_web::{client, dev::Body, web, App, HttpServer, Result};
 use std::convert::TryFrom;
+use std::process::exit;
 use std::sync::Mutex;
 
 struct AppStateWithBasicData {
@@ -68,9 +69,8 @@ async fn cmd_handler(core_port: web::Data<CorePort>, bytes: web::Bytes) -> Resul
     Ok(format!("Welcome {}!", "info.username"))
 }
 
-async fn exit_handler(bytes: web::Bytes) -> Result<web::Bytes> {
-    println!("exit");
-    std::process::exit(0);
+async fn exit_handler() -> Result<web::Bytes> {
+    async { exit(0) }.await;
     Ok(web::Bytes::new())
 }
 
