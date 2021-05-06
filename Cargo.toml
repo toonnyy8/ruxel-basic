@@ -8,6 +8,8 @@ edition = "2018"
 
 [dependencies]
 actix-web = "3"
+clap = "3.0.0-beta.2"
+regex = { version =  "1.4.3", default-features = false, features = ["std", "unicode", "perf-cache", "perf-dfa", "perf-inline"] }
 # tokio = { version = "1", features = ["full"] }
 # warp = "0.3"
 # reqwest = { version = "0.11", features = ["blocking", "json"] }
